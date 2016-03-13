@@ -11,6 +11,8 @@ module SpreadsheetArchitect
   end
 
   module Helpers
+    class NoDataError < StandardError; end
+
     def self.str_humanize(str, capitalize = true)
       str = str.sub(/\A_+/, '').gsub(/[_\.]/,' ').sub(' rescue nil','')
       if capitalize
@@ -27,6 +29,7 @@ module SpreadsheetArchitect
       else
         raise 'No data option was defined. This is required for plain ruby objects.'
       end
+      raise NoDataError if options[:data].none?
 
       if !has_custom_columns && klass.ancestors.include?(ActiveRecord::Base)
         the_column_names = (klass.column_names - ["id","created_at","updated_at","deleted_at"])
