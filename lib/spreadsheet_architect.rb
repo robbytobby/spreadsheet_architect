@@ -5,13 +5,13 @@ require 'spreadsheet_architect/axlsx_column_width_patch'
 require 'odf/spreadsheet'
 require 'csv'
 
+
 module SpreadsheetArchitect
   def self.included(base)
     base.send :extend, ClassMethods
   end
 
   module Helpers
-    class NoDataError < StandardError; end
 
     def self.str_humanize(str, capitalize = true)
       str = str.sub(/\A_+/, '').gsub(/[_\.]/,' ').sub(' rescue nil','')
@@ -214,3 +214,5 @@ module SpreadsheetArchitect
     end
   end
 end
+
+class SpreadsheetArchitect::NoDataError < StandardError; end
