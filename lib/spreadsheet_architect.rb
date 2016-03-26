@@ -5,51 +5,85 @@ require 'spreadsheet_architect/axlsx_column_width_patch'
 require 'odf/spreadsheet'
 require 'csv'
 
-
 module SpreadsheetArchitect
   def self.included(base)
     base.send :extend, ClassMethods
   end
 
-  module Helpers
+  class NoDataError < StandardError
+    def initialize
+      super("Missing data option or relation is empty.")
+    end
+  end
+  
+  class SpreadsheetColumnsNotDefined < StandardError
+    def initialize(klass=nil)
+      super("The spreadsheet_columns option is not defined on #{klass.name}")
+    end
+  end
 
+  module Helpers
     def self.str_humanize(str, capitalize = true)
       str = str.sub(/\A_+/, '').gsub(/[_\.]/,' ').sub(' rescue nil','')
       if capitalize
         str = str.gsub(/(\A|\ )\w/){|x| x.upcase}
       end
-      str
+      return str
+    end
+
+    def self.get_type(value, type=nil, last_run=false)
+      return type if !type.blank?
+      if value.is_a?(Numeric)
+        if [:float, :decimal].include?(type)
+          type = :float
+        else
+          type = :integer
+        end
+      elsif !last_run && value.is_a?(Symbol)
+        type = :symbol
+      else
+        type = :string
+      end
+      return type
     end
 
     def self.get_options(options={}, klass)
       has_custom_columns = klass.instance_methods.include?(:spreadsheet_columns)
 
-      if !options[:data] && klass.ancestors.include?(ActiveRecord::Base)
+      if !options[:data] && defined?(ActiveRecord) && klass.ancestors.include?(ActiveRecord::Base)
         options[:data] = klass.where(options[:where]).order(options[:order]).to_a
-      else
-        raise 'No data option was defined. This is required for plain ruby objects.'
       end
-      raise NoDataError if options[:data].none?
 
-      if !has_custom_columns && klass.ancestors.include?(ActiveRecord::Base)
-        the_column_names = (klass.column_names - ["id","created_at","updated_at","deleted_at"])
+      if !options[:data] || options[:data].empty?
+        raise SpreadsheetArchitect::NoDataError
+      end
+
+      if !has_custom_columns && defined?(ActiveRecord) && klass.ancestors.include?(ActiveRecord::Base)
+        ignored_columns = ["id","created_at","updated_at","deleted_at"] 
+        the_column_names = (klass.column_names - ignored_columns)
         headers = the_column_names.map{|x| str_humanize(x)}
         columns = the_column_names.map{|x| x.to_sym}
+        types = klass.columns.keep_if{|x| !ignored_columns.include?(x.name)}.collect(&:type)
+        types.map!{|type| self.get_type(nil, type)}
       elsif has_custom_columns
         headers = []
         columns = []
+        types = []
         array = options[:spreadsheet_columns] || options[:data].first.spreadsheet_columns
         array.each do |x|
           if x.is_a?(Array)
             headers.push x[0].to_s
             columns.push x[1]
+            #types.push self.get_type(x[1], x[2])
+            types.push self.get_type(x[1], nil)
           else
             headers.push str_humanize(x.to_s)
             columns.push x
+            types.push self.get_type(x, nil)
           end
         end
       else
-        raise 'No instance method `spreadsheet_columns` found on this plain ruby object'
+        raise SpreadsheetArchitect::SpreadsheetColumnsNotDefined, klass
       end
 
       data = []
@@ -66,6 +100,15 @@ module SpreadsheetArchitect
           data.push row_data
         else
           data.push columns.map{|col| col.is_a?(Symbol) ? instance.instance_eval(col.to_s) : col}
+        end
+      end
+      
+      # Fixes missing types from symbol methods
+      if has_custom_columns || options[:spreadsheet_columns]
+        data.first.each_with_index do |x,i|
+          if types[i] == :symbol
+            types[i] = self.get_type(x, nil, true)
+          end
         end
       end
 
@@ -85,8 +128,6 @@ module SpreadsheetArchitect
       end
 
       sheet_name = options[:sheet_name] || klass.name
-
-      types = (options[:types] || []).flatten
 
       return {headers: headers, header_style: header_style, row_style: row_style, types: types, sheet_name: sheet_name, data: data}
     end
@@ -153,8 +194,8 @@ module SpreadsheetArchitect
         end
         options[:data].each do |row_data|
           row do 
-            row_data.each do |y|
-              cell y, style: :row_style
+            row_data.each_with_index do |y,i|
+              cell y, style: :row_style, type: options[:types][i]
             end
           end
         end
@@ -214,5 +255,3 @@ module SpreadsheetArchitect
     end
   end
 end
-
-class SpreadsheetArchitect::NoDataError < StandardError; end
